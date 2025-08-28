@@ -1,0 +1,1 @@
+package site.noqiokweb.wyj.dev.tech.trigger;
