@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>AI 对话 (SSE)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<!-- 顶栏 -->
+<header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
+    <div class="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+        <h1 class="font-semibold">AI 对话</h1>
+        <span class="text-xs text-slate-500">流式 GET · SSE</span>
+        <div class="ml-auto flex items-center gap-2">
+            <label class="text-sm text-slate-600">Model</label>
+            <input id="modelInput" class="px-2 py-1 rounded border border-slate-300 text-sm focus:outline-none focus:ring focus:ring-slate-200"
+                   value="deepseek-r1:1.5b" />
+        </div>
+    </div>
+</header>
+
+<!-- 对话区 -->
+<main class="max-w-4xl mx-auto px-4 py-4">
+    <div id="chat" class="flex flex-col gap-3"></div>
+</main>
+
+<!-- 输入区 -->
+<footer class="sticky bottom-0 bg-white/80 backdrop-blur border-t border-slate-200">
+    <div class="max-w-4xl mx-auto px-4 py-3">
+        <div class="flex items-end gap-2">
+        <textarea id="msgInput" rows="1" placeholder="输入内容，回车发送（Shift+Enter换行）"
+                  class="flex-1 resize-none px-3 py-2 rounded-2xl border border-slate-300 focus:outline-none focus:ring focus:ring-slate-200"></textarea>
+            <button id="sendBtn"
+                    class="px-4 h-10 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 active:scale-[0.99] transition">
+                发送
+            </button>
+            <button id="stopBtn"
+                    class="px-3 h-10 rounded-xl bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 disabled:opacity-40"
+                    disabled>停止</button>
+        </div>
+        <p id="tip" class="mt-1 text-xs text-slate-500">提示：服务端需返回 <code>text/event-stream</code>，每条事件的 JSON 形如对象或单元素数组，结束时 <code>result.metadata.finishReason</code> 为 <code>STOP</code>。</p>
+    </div>
+</footer>
+
+<script>
+    // === 可按需修改的基础路径 ===
+    const BASE_URL = "http://localhost:8090/api/v1/ollama/generate_stream";
+
+    const chatEl   = document.getElementById("chat");
+    const msgInput = document.getElementById("msgInput");
+    const modelInp = document.getElementById("modelInput");
+    const sendBtn  = document.getElementById("sendBtn");
+    const stopBtn  = document.getElementById("stopBtn");
+
+    let currentSource = null;   // 当前 EventSource
+    let receiving      = false; // 是否处于接收中
+
+    function appendBubble(role, html = "") {
+        const wrap = document.createElement("div");
+        wrap.className = `flex ${role === "user" ? "justify-end" : "justify-start"}`;
+        const bubble = document.createElement("div");
+        bubble.className = [
+            "max-w-[85%]",
+            "px-4 py-2 rounded-2xl shadow-sm",
+            role === "user" ? "bg-blue-600 text-white rounded-br-md" : "bg-white border border-slate-200 rounded-bl-md"
+        ].join(" ");
+        bubble.innerHTML = html;
+        wrap.appendChild(bubble);
+        chatEl.appendChild(wrap);
+        chatEl.scrollTop = chatEl.scrollHeight;
+        return bubble;
+    }
+
+    function setUIBusy(busy) {
+        receiving = busy;
+        sendBtn.disabled = busy;
+        stopBtn.disabled = !busy;
+        msgInput.disabled = busy;
+        if (!busy) msgInput.focus();
+    }
+
+    function escapeHTML(s) {
+        return s.replace(/[&<>"']/g, c => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[c]));
+    }
+
+    function startStreaming(model, message) {
+        // 1) 添加用户消息
+        appendBubble("user", `<div class="whitespace-pre-wrap leading-relaxed">${escapeHTML(message)}</div>`);
+        // 2) 添加助手气泡（占位，后续流式追加）
+        const assistantBubble = appendBubble("assistant", `
+        <div class="whitespace-pre-wrap leading-relaxed" id="assistant-text"></div>
+        <div id="typing" class="mt-1 text-xs text-slate-400">对方正在输入<span class="animate-pulse">‧‧‧</span></div>
+      `);
+        const textEl = assistantBubble.querySelector("#assistant-text");
+        const typingEl = assistantBubble.querySelector("#typing");
+
+        // 3) 组装 URL（GET + SSE）
+        const url = `${BASE_URL}?model=${encodeURIComponent(model)}&message=${encodeURIComponent(message)}`;
+
+        // 4) 打开 SSE
+        setUIBusy(true);
+        try {
+            const eventSource = new EventSource(url);
+            currentSource = eventSource;
+
+            eventSource.onmessage = (e) => {
+                if (!e.data) return;
+
+                // 有些实现可能发送 "[DONE]" 作为结束标记；优雅处理
+                if (e.data === "[DONE]") {
+                    finish();
+                    return;
+                }
+
+                let payload;
+                try {
+                    payload = JSON.parse(e.data);
+                } catch (err) {
+                    console.warn("非 JSON 数据（忽略）：", e.data);
+                    return;
+                }
+
+                // 兼容：有的服务可能包一层数组
+                const item = Array.isArray(payload) ? payload[0] : payload;
+                const content = item?.result?.output?.content ?? "";
+                const finishReason = item?.result?.metadata?.finishReason ?? null;
+
+                if (typeof content === "string" && content.length > 0) {
+                    // 追加文本（逐块渲染）
+                    textEl.textContent += content;
+                    chatEl.scrollTop = chatEl.scrollHeight;
+                }
+
+                if (finishReason === "STOP") {
+                    finish();
+                }
+            };
+
+            eventSource.onerror = (e) => {
+                console.error("SSE 连接错误：", e);
+                // 失败时也结束当前流
+                //finish("连接出错，中止。");
+            };
+
+            function finish(extraMsg) {
+                if (typingEl) typingEl.remove();
+                if (extraMsg) {
+                    // 在消息末尾附加错误提示（不打断已有内容）
+                    const note = document.createElement("div");
+                    note.className = "mt-2 text-xs text-red-500";
+                    note.textContent = extraMsg;
+                    assistantBubble.appendChild(note);
+                }
+                if (currentSource) {
+                    currentSource.close();
+                    currentSource = null;
+                }
+                setUIBusy(false);
+            }
+        } catch (err) {
+            console.error(err);
+            setUIBusy(false);
+            const warn = document.createElement("div");
+            warn.className = "mt-2 text-xs text-red-600";
+            warn.textContent = "无法建立 SSE 连接，请检查服务是否返回 text/event-stream、CORS 与 URL 是否正确。";
+            assistantBubble.appendChild(warn);
+        }
+    }
+
+    // 发送按钮
+    sendBtn.addEventListener("click", () => {
+        if (receiving) return;
+        const msg = msgInput.value.trim();
+        const model = modelInp.value.trim() || "deepseek-r1:1.5b";
+        if (!msg) return;
+        msgInput.value = "";
+        startStreaming(model, msg);
+    });
+
+    // 停止按钮
+    stopBtn.addEventListener("click", () => {
+        if (currentSource) {
+            currentSource.close();
+            currentSource = null;
+        }
+        setUIBusy(false);
+    });
+
+    // 回车发送 / Shift+Enter 换行
+    msgInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendBtn.click();
+        }
+    });
+</script>
+</body>
+</html>
