@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <title>解析 Git 仓库 · 知识入库</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar{width:8px;height:8px}
+        ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
+        ::-webkit-scrollbar-track{background:transparent}
+    </style>
+</head>
+<body class="min-h-screen bg-gray-50 text-gray-900">
+<div class="max-w-3xl mx-auto p-6">
+    <!-- 顶部栏 -->
+    <div class="mb-6 flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold">解析 Git 仓库</h1>
+            <p class="text-sm text-gray-500 mt-1">克隆仓库 → 抽取文本 → 切片 → 向量入库（pgvector），实时显示日志</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-600">服务地址</label>
+            <input id="baseInput" class="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                   value="http://106.54.0.161:8090" placeholder="http://host:port">
+        </div>
+    </div>
+
+    <!-- 主卡片 -->
+    <div class="bg-white border rounded-2xl shadow-sm p-6 space-y-5">
+        <div>
+            <label class="block text-sm font-medium mb-2">仓库地址（repoUrl）<span class="text-red-500">*</span></label>
+            <input id="repoUrl" type="url" placeholder="例如：https://gitcode.com/org/project.git"
+                   class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900">
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium mb-2">用户名（userName）<span class="text-red-500">*</span></label>
+                <input id="userName" type="text" placeholder="若用 Token，有些平台可固定为用户名或留空"
+                       class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900">
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-2">密码 / Token（token）<span class="text-red-500">*</span></label>
+                <input id="token" type="password" placeholder="建议使用个人访问令牌（PAT）"
+                       class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900">
+            </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+            <div class="text-xs text-gray-500">提示：执行过程中日志将实时显示。执行期间请不要关闭此页面。</div>
+            <div class="flex items-center gap-2">
+                <button id="btnClear" class="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-100">清空</button>
+                <button id="btnStart" class="px-4 py-1.5 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800">开始解析</button>
+            </div>
+        </div>
+
+        <!-- 进度/结果 -->
+        <div id="resultWrap" class="hidden">
+            <div class="flex items-center justify-between text-sm mb-1">
+                <span id="statusText" class="text-gray-600">正在提交请求...</span>
+                <span id="ts" class="text-gray-400"></span>
+            </div>
+            <div class="w-full h-2 bg-gray-200 rounded">
+                <div id="bar" class="h-2 bg-gray-900 rounded transition-all" style="width:0%"></div>
+            </div>
+        </div>
+
+        <div id="toast" class="hidden px-3 py-2 rounded-lg text-sm"></div>
+
+        <div>
+            <label class="block text-sm font-medium mb-2">执行日志</label>
+            <pre id="log" class="h-56 overflow-auto bg-gray-50 border rounded-xl p-3 text-xs text-gray-700"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+    const baseInput = document.getElementById('baseInput');
+    const repoUrl   = document.getElementById('repoUrl');
+    const userName  = document.getElementById('userName');
+    const token     = document.getElementById('token');
+    const btnStart  = document.getElementById('btnStart');
+    const btnClear  = document.getElementById('btnClear');
+    const resultWrap= document.getElementById('resultWrap');
+    const statusText= document.getElementById('statusText');
+    const bar       = document.getElementById('bar');
+    const toast     = document.getElementById('toast');
+    const logEl     = document.getElementById('log');
+    const ts        = document.getElementById('ts');
+
+    let es = null; // EventSource
+
+    function showToast(msg, ok=true) {
+        toast.textContent = msg;
+        toast.className = `px-3 py-2 rounded-lg text-sm ${ok?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-red-50 text-red-700 border border-red-200'}`;
+        toast.classList.remove('hidden');
+        setTimeout(()=>toast.classList.add('hidden'), 3000);
+    }
+
+    function logLine(text) {
+        const t = new Date().toLocaleTimeString();
+        logEl.textContent += `[${t}] ${text}\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function joinUrl(base, pathWithLeadingSlash) {
+        return base.replace(/\/+$/,'') + pathWithLeadingSlash;
+    }
+
+    btnClear.addEventListener('click', ()=>{
+        repoUrl.value = ''; userName.value=''; token.value='';
+        logEl.textContent = '';
+        bar.style.width = '0%';
+        statusText.textContent = '已清空';
+        resultWrap.classList.add('hidden');
+        if (es) { es.close(); es = null; }
+    });
+
+    btnStart.addEventListener('click', ()=>{
+        const base = baseInput.value.trim() || 'http://106.54.0.161:8090';
+        const r = repoUrl.value.trim();
+        const u = userName.value.trim();
+        const p = token.value.trim();
+
+        if (!r || !u || !p) { showToast('请完整填写仓库地址、用户名、密码/Token', false); return; }
+
+        // UI 状态
+        btnStart.disabled = true;
+        btnStart.classList.add('opacity-60','cursor-not-allowed');
+        resultWrap.classList.remove('hidden');
+        bar.style.width = '5%';
+        statusText.textContent = '连接日志通道...';
+        ts.textContent = new Date().toLocaleString();
+        logLine('开始解析请求已提交');
+
+        // 关闭旧的
+        if (es) { es.close(); es = null; }
+
+        // 打开 SSE 流
+        const url = joinUrl(base, '/api/v1/rag/analyze_git_repoistory_stream')
+            + `?repoUrl=${encodeURIComponent(r)}&userName=${encodeURIComponent(u)}&token=${encodeURIComponent(p)}`;
+
+        es = new EventSource(url);
+
+        es.addEventListener('open', () => {
+            bar.style.width = '25%';
+            statusText.textContent = '已连接，开始接收日志...';
+        });
+
+        es.addEventListener('log', (ev) => {
+            // 每条日志到来
+            bar.style.width = '90%';
+            logLine(ev.data);
+        });
+
+        es.addEventListener('done', () => {
+            bar.style.width = '100%';
+            statusText.textContent = '完成';
+            showToast('解析任务已完成');
+            es.close(); es = null;
+            btnStart.disabled = false;
+            btnStart.classList.remove('opacity-60','cursor-not-allowed');
+        });
+
+        es.addEventListener('error', (ev) => {
+            bar.style.width = '100%';
+            statusText.textContent = '失败';
+            showToast('解析失败（后端返回 error 事件）', false);
+            logLine('error: ' + (ev.data || ''));
+            es.close(); es = null;
+            btnStart.disabled = false;
+            btnStart.classList.remove('opacity-60','cursor-not-allowed');
+        });
+
+        es.onerror = () => {
+            // 网络/跨域/连接断开等
+            if (es) { es.close(); es = null; }
+            statusText.textContent = '连接中断';
+            showToast('日志通道中断或不可达', false);
+            btnStart.disabled = false;
+            btnStart.classList.remove('opacity-60','cursor-not-allowed');
+        };
+    });
+
+    // 恢复上次 base
+    (function init(){
+        const saved = localStorage.getItem('api_base');
+        if (saved) baseInput.value = saved;
+    })();
+</script>
+</body>
+</html>
