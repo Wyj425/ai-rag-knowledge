@@ -81,7 +81,7 @@ public class RAGController implements IRAGService {                     // 声�
     @PostMapping(value = "file/upload",                                 // 暴露 POST 接口：/file/upload —— 上传文件到某个 ragTag 知识库
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE)          // 要求请求头是 multipart/form-data（表单+文件上传）
     @Override
-    public Response<String> uploadFile(@RequestParam String ragTag,     // 从表单参数里取知识库标签 ragTag（比如 “项目A”）
+    public Response<String> uploadFile(@RequestParam("ragTag") String ragTag,     // 从表单参数里取知识库标签 ragTag（比如 “项目A”）
                                        @RequestParam("file") List<MultipartFile> files) { // 取名为 file 的多个文件（List<MultipartFile>）
         log.info("上传知识库开始 {}", ragTag);                             // 记录日志：开始上传哪个标签的知识库
 
@@ -114,9 +114,9 @@ public class RAGController implements IRAGService {                     // 声�
     @PostMapping("analyze_git_repoistory")                                // 暴露 POST 接口：/api/v1/.../analyze_git_repoistory
     @Override
     public Response<String> analyzeGitRepoistory(
-            @RequestParam String repoUrl,                                  // 前端传入：Git 仓库地址（HTTPS / SSH 转换后的 HTTPS）
-            @RequestParam String userName,                                 // 前端传入：用户名（建议用 token 搭配固定用户名或空）
-            @RequestParam String token) throws Exception {                 // 前端传入：密码/访问令牌（建议使用 PAT），此处抛出异常交给全局处理
+            @RequestParam("repoUrl") String repoUrl,                                  // 前端传入：Git 仓库地址（HTTPS / SSH 转换后的 HTTPS）
+            @RequestParam("userName") String userName,                                 // 前端传入：用户名（建议用 token 搭配固定用户名或空）
+            @RequestParam("token") String token) throws Exception {                 // 前端传入：密码/访问令牌（建议使用 PAT），此处抛出异常交给全局处理
 
         String localPath = "./git-cloned-repo";                            // 临时克隆目录（相对项目根目录）
         String repoProjectName = extractProjectName(repoUrl);              // 从 repoUrl 提取“项目名”（作为知识库标签使用）
@@ -238,9 +238,9 @@ public class RAGController implements IRAGService {                     // 声�
 // 还会用到你类里已有的：TokenTextSplitter / PgVectorStore / RedissonClient / TikaDocumentReader 等
 
     @GetMapping(value = "analyze_git_repoistory_stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter analyzeGitRepoistoryStream(@RequestParam String repoUrl,
-                                                 @RequestParam String userName,
-                                                 @RequestParam String token) {
+    public SseEmitter analyzeGitRepoistoryStream(@RequestParam("repoUrl") String repoUrl,
+                                                 @RequestParam("userName") String userName,
+                                                 @RequestParam("token") String token) {
         // 0 表示不过期；如需超时自行设置毫秒值
         SseEmitter emitter = new SseEmitter(0L);
 
