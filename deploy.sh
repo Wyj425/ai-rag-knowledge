@@ -18,7 +18,7 @@ cd ../docs/tag/v1.0
 
 
 echo ">>> 启动环境容器"
-docker-compose -f docker-compose-enviroment-aliyun.yml up -d
+docker-compose -f docker-compose-environment-aliyun.yml up -d
 echo ">>> 启动项目容器"
 docker-compose -f docker-compose-app-v1.0.yml up -d
 
