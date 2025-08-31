@@ -14,10 +14,12 @@ echo ">>> 执行 ./build.sh"
 ./build.sh
 
 # 回到 docker-compose 文件所在目录（根据你的目录结构调整）
-cd ../docs/release
+cd ../docs/tag/v1.0
 
 
-echo ">>> 启动容器"
-docker-compose -f docker-compose.yml
+echo ">>> 启动环境容器"
+docker-compose -f docker-compose-enviroment-aliyun.yml up -d
+echo ">>> 启动项目容器"
+docker-compose -f docker-compose-app-v1.0.yml up -d
 
 echo "✅ 部署完成"
