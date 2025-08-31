@@ -27,12 +27,25 @@ spring:
       # 连接测试query
       connection-test-query: SELECT 1
   ai:
+    openai:
+      base-url: https://apis.itedus.cn
+      api-key: sk-TrhkYm25ovLPxrmQ859cBfA7A12f4d34A731A12e9891C773
+      embedding-model: text-embedding-ada-002
+    openai1:
+      base-url: https://api.wahooai.com
+      api-key: sk-3B1oEhNc0jYJ61G37e93759aC6C9403dAe33C9EdE83dAf93
+      embedding-model: text-embedding-ada-002
     ollama:
       base-url: http://106.54.0.161:11434
       embedding:
         options:
           num-batch: 512
         model: nomic-embed-text
+    rag:
+      embed: nomic-embed-text #nomic-embed-text、text-embedding-ada-002
+    vectorstore:
+      pgvector:
+        table-name: public.vector_store
 
 # Redis
 redis:

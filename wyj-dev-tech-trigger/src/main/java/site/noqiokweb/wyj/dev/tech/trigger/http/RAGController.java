@@ -18,14 +18,23 @@ import org.springframework.core.io.PathResource;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import site.noqiokweb.wyj.dev.tech.api.IRAGService;
 import site.noqiokweb.wyj.dev.tech.api.response.Response;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+
+
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 
 /**
  * @author TheLastSavior noqiokweb.site @wyj
@@ -52,6 +61,11 @@ public class RAGController implements IRAGService {                     // 声�
 
     @Resource                                                          // 注入 Redisson 客户端，用来跟 Redis 交互（维护 ragTag 列表）
     private RedissonClient redissonClient;
+    @Resource
+    private JdbcTemplate jdbcTemplate;
+
+    @Value("${spring.ai.vectorstore.pgvector.table-name:vector_store}")
+    private String pgVectorTableName;
 
     @GetMapping("query_rag_tag_list")                                  // 暴露 GET 接口：/query_rag_tag_list  —— 查询已有的知识库标签列表
     @Override
@@ -116,7 +130,10 @@ public class RAGController implements IRAGService {                     // 声�
                 .setCredentialsProvider(                                   // 设置凭据（公开仓库可省略）
                         new UsernamePasswordCredentialsProvider(userName, token))
                 .call();                                                   // 执行克隆
-
+        RList<String> elements = redissonClient.getList("ragTag");         // 从 Redis 获取 ragTag 列表（Redisson 分布式 List）
+        if (!elements.contains(repoProjectName)) {                         // 若列表里还没有当前项目名
+            elements.add(repoProjectName);                                 // 追加（供前端做下拉/筛选）
+        }
         // 递归遍历克隆目录中的所有文件
         Files.walkFileTree(Paths.get(localPath), new SimpleFileVisitor<>() {
             @Override
@@ -156,10 +173,7 @@ public class RAGController implements IRAGService {                     // 声�
 
 
 
-        RList<String> elements = redissonClient.getList("ragTag");         // 从 Redis 获取 ragTag 列表（Redisson 分布式 List）
-        if (!elements.contains(repoProjectName)) {                         // 若列表里还没有当前项目名
-            elements.add(repoProjectName);                                 // 追加（供前端做下拉/筛选）
-        }
+
 
         git.close();                                                       // 关闭 JGit 资源（释放句柄）
         FileUtils.deleteDirectory(new File(localPath));                    // 入库完成后清理整个临时克隆目录，节省磁盘
@@ -174,6 +188,132 @@ public class RAGController implements IRAGService {                     // 声�
         String projectNameWithGit = parts[parts.length - 1];               // 取最后一段（如 xxx.git 或 xxx）
         return projectNameWithGit.replace(".git", "");                     // 去掉 .git 后缀
     }
+    // === 新增：删除知识库 ===
+    @DeleteMapping("knowledge/delete")
+    public Response<String> deleteKnowledge(@RequestParam String ragTag,
+                                            @RequestParam String username,
+                                            @RequestParam String password) {
+        // 1) 简单身份校验
+        if (!"root".equals(username) || !"xjtuwyj0524".equals(password)) {
+            return Response.<String>builder()
+                    .code("0401")
+                    .info("认证失败：用户名或密码错误")
+                    .build();
+        }
+
+        // 2) 执行 SQL 删除（按 metadata->>'knowledge' 精确匹配）
+        //    防 SQL 注入：ragTag 走占位符绑定；表名来自受控配置项。
+        String sql = "DELETE FROM " + pgVectorTableName + " WHERE metadata ->> 'knowledge' = ?";
+        int affected;
+        try {
+            affected = jdbcTemplate.update(sql, ragTag);
+        } catch (Exception e) {
+            log.error("删除向量数据失败, ragTag={}", ragTag, e);
+            return Response.<String>builder()
+                    .code("0500")
+                    .info("删除向量数据失败：" + e.getMessage())
+                    .build();
+        }
+
+        // 3) 从 Redis 列表移除标签（可选）
+        try {
+            RList<String> elements = redissonClient.getList("ragTag");
+            elements.remove(ragTag);
+        } catch (Exception e) {
+            log.warn("从Redis移除 ragTag 失败(不影响主流程), ragTag={}", ragTag, e);
+        }
+
+        log.info("知识库删除完成：{}，删除条数：{}", ragTag, affected);
+        return Response.<String>builder()
+                .code("0000")
+                .info("删除成功，影响行数：" + affected)
+                .build();
+    }
+
+    // 需要导入：
+// import org.springframework.http.MediaType;
+// import org.springframework.web.bind.annotation.GetMapping;
+// import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+//
+// 还会用到你类里已有的：TokenTextSplitter / PgVectorStore / RedissonClient / TikaDocumentReader 等
+
+    @GetMapping(value = "analyze_git_repoistory_stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter analyzeGitRepoistoryStream(@RequestParam String repoUrl,
+                                                 @RequestParam String userName,
+                                                 @RequestParam String token) {
+        // 0 表示不过期；如需超时自行设置毫秒值
+        SseEmitter emitter = new SseEmitter(0L);
+
+        // 异步执行，避免阻塞请求线程（也可用 @Async、自建线程池等）
+        CompletableFuture.runAsync(() -> {
+            // 简化发送：发一条 "log" 事件
+            Consumer<String> sendLog = msg -> {
+                try {
+                    emitter.send(SseEmitter.event().name("log").data(msg));
+                } catch (IOException ignore) { }
+            };
+
+            String localPath = "./git-cloned-repo-" + UUID.randomUUID();
+            String repoProjectName = extractProjectName(repoUrl);
+            sendLog.accept("开始：准备克隆仓库 " + repoUrl);
+            sendLog.accept("临时路径：" + new File(localPath).getAbsolutePath());
+
+            try (Git git = Git.cloneRepository()
+                    .setURI(repoUrl)
+                    .setDirectory(new File(localPath))
+                    .setCredentialsProvider(new UsernamePasswordCredentialsProvider(userName, token))
+                    .call()) {
+
+                sendLog.accept("克隆完成");
+
+                // 遍历文件，解析 -> 切片 -> 入库，并推送每一步日志
+                Files.walkFileTree(Paths.get(localPath), new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        sendLog.accept("处理文件：" + file);
+                        try {
+                            TikaDocumentReader reader = new TikaDocumentReader(new PathResource(file));
+                            List<Document> docs = reader.get();
+                            List<Document> chunks = tokenTextSplitter.apply(docs);
+
+                            docs.forEach(d -> d.getMetadata().put("knowledge", repoProjectName));
+                            chunks.forEach(d -> d.getMetadata().put("knowledge", repoProjectName));
+
+                            pgVectorStore.accept(chunks);
+                            sendLog.accept("入库成功：" + file.getFileName());
+                        } catch (Exception e) {
+                            sendLog.accept("入库失败：" + file.getFileName() + "，原因：" + e.getMessage());
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+
+                    @Override
+                    public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                        sendLog.accept("无法访问文件：" + file + "，原因：" + exc.getMessage());
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+
+                // 记录 ragTag
+                RList<String> elements = redissonClient.getList("ragTag");
+                if (!elements.contains(repoProjectName)) {
+                    elements.add(repoProjectName);
+                    sendLog.accept("知识库标签已记录：" + repoProjectName);
+                }
+
+            } catch (Exception e) {
+                sendLog.accept("任务失败：" + e.getMessage());
+                try { emitter.send(SseEmitter.event().name("error").data(e.getMessage())); } catch (IOException ignore) {}
+            } finally {
+                try { FileUtils.deleteDirectory(new File(localPath)); } catch (IOException ignore) {}
+                try { emitter.send(SseEmitter.event().name("done").data("OK")); } catch (IOException ignore) {}
+                emitter.complete();
+            }
+        });
+
+        return emitter;
+    }
+
 
 }
 

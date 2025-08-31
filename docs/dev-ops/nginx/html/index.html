@@ -6,28 +6,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 让滚动条更细一点 */
         ::-webkit-scrollbar{width:8px;height:8px}
         ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
         ::-webkit-scrollbar-track{background:transparent}
-        /* 让消息里的换行按原样展示 */
-        .preserve-whitespace { white-space: pre-wrap; word-break: break-word; }
+        .preserve-whitespace{white-space:pre-wrap;word-break:break-word}
     </style>
 </head>
-<body class="h-screen bg-gray-50 text-gray-900">
+<body class="h-screen overflow-hidden bg-gray-50 text-gray-900">
 <div class="h-full grid grid-cols-12">
 
-    <!-- 左侧：会话列表 -->
-    <aside class="col-span-3 md:col-span-3 lg:col-span-3 h-full border-r bg-white">
-        <div class="p-4 flex items-center justify-between border-b">
+    <!-- 左侧：会话列表（固定高，内部滚动） -->
+    <aside class="col-span-3 h-full border-r bg-white flex flex-col min-h-0">
+        <div class="p-4 flex items-center justify-between border-b shrink-0">
             <div class="font-semibold text-lg">会话</div>
-            <button id="btnNewChat" class="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800">
-                新建聊天
-            </button>
+            <button id="btnNewChat" class="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800">新建聊天</button>
         </div>
 
-        <!-- 折叠/展开聊天列表头 -->
-        <div class="px-4 py-2 flex items-center justify-between cursor-pointer select-none hover:bg-gray-100" id="toggleList">
+        <div id="toggleList" class="px-4 py-2 flex items-center justify-between cursor-pointer select-none hover:bg-gray-100 shrink-0">
             <div class="flex items-center gap-2">
                 <svg id="chevronIcon" class="w-4 h-4 text-gray-500 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/>
@@ -37,44 +32,63 @@
             <span class="text-xs text-gray-400" id="chatCount">0</span>
         </div>
 
-        <!-- 聊天列表 -->
-        <div id="chatList" class="overflow-y-auto" style="height: calc(100% - 112px);">
-            <!-- 动态填充 -->
-        </div>
+        <div id="chatList" class="flex-1 overflow-y-auto"></div>
     </aside>
 
-    <!-- 右侧：对话区 -->
-    <main class="col-span-9 md:col-span-9 lg:col-span-9 h-full flex flex-col">
+    <!-- 右侧：对话区（固定高，消息区滚动；输入栏固定底部） -->
+    <main class="col-span-9 h-full flex flex-col min-h-0">
         <!-- 顶部工具栏 -->
-        <header class="p-4 border-b bg-white">
+        <header class="p-4 border-b bg-white shrink-0">
             <div class="flex flex-wrap items-center gap-3">
                 <label class="text-sm text-gray-600">模型</label>
-                <input id="modelInput" class="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                       value="deepseek-r1:1.5b" placeholder="如：deepseek-r1:1.5b"/>
+                <select id="modelSelect" class="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900">
+                    <option value="deepseek-r1:1.5b">deepseek-r1:1.5b</option>
+                    <option value="gpt-4o">gpt-4o</option>
+                    <option value="gpt-4.1">gpt-4.1</option>
+                    <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                    <option value="gpt-4o-mini">gpt-4o-mini</option>
+                    <option value="gpt-4.1-nano">gpt-4.1-nano</option>
+                </select>
 
-                <label class="text-sm text-gray-600">服务地址</label>
-                <input id="baseInput" class="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
-                       value="http://localhost:8090" placeholder="http://host:port"/>
+                <!-- 知识库下拉 -->
+                <label class="text-sm text-gray-600">知识库</label>
+                <div class="flex items-center gap-2">
+                    <select id="kbSelect" class="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900 min-w-[12rem]">
+                        <option value="">（可选）不使用知识库</option>
+                    </select>
+                    <button id="btnReloadKB" class="px-2 py-1 rounded border text-gray-700 hover:bg-gray-100 text-sm">刷新</button>
+                    <button id="btnDeleteKB" class="px-2 py-1 rounded border text-red-600 hover:bg-red-50 text-sm">删除</button>
+                    <span id="kbStatus" class="text-xs text-gray-500"></span>
+                </div>
 
-                <div class="ml-auto flex items-center gap-2">
-                    <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-                    <span class="text-sm text-gray-600">Ollama 正在运行</span>
-                    <span class="text-gray-300">/</span>
-                    <span id="currentChatTitle" class="text-sm text-gray-900 font-medium">未选择会话</span>
+                <div class="ml-auto flex items-center gap-3">
+                    <div class="flex items-center gap-2">
+                        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+                        <span class="text-sm text-gray-600">服务在线</span>
+                        <span class="text-gray-300">/</span>
+                        <span id="currentChatTitle" class="text-sm text-gray-900 font-medium">未选择会话</span>
+                    </div>
+
+                    <!-- 上传知识菜单 -->
+                    <div class="relative">
+                        <button id="btnUploadMenu" class="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50">上传知识</button>
+                        <div id="uploadMenu" class="hidden absolute right-0 mt-2 w-44 bg-white border rounded-xl shadow z-10 overflow-hidden">
+                            <a href="upload.html" target="_blank" class="block px-3 py-2 text-sm hover:bg-gray-50">上传文件</a>
+                            <a href="analyzeGit.html" target="_blank" class="block px-3 py-2 text-sm hover:bg-gray-50 border-t">解析 git 仓库</a>
+                        </div>
+                    </div>
                 </div>
             </div>
         </header>
 
-        <!-- 消息列表 -->
-        <section id="messageList" class="flex-1 overflow-y-auto p-6 space-y-4">
-            <!-- 动态填充 -->
-        </section>
+        <!-- 消息列表：仅此区域滚动 -->
+        <section id="messageList" class="flex-1 overflow-y-auto p-6 space-y-4 min-h-0"></section>
 
-        <!-- 输入区 -->
-        <footer class="p-4 border-t bg-white">
+        <!-- 输入区：固定底部 -->
+        <footer class="p-4 border-t bg-white shrink-0 sticky bottom-0 z-20">
             <div class="rounded-2xl border bg-gray-50 p-3">
-          <textarea id="inputBox" rows="3" placeholder="输入一条消息...（Ctrl/⌘ + Enter 发送）"
-                    class="w-full bg-transparent outline-none resize-none text-sm preserve-whitespace px-2"></textarea>
+                <textarea id="inputBox" rows="3" placeholder="输入一条消息...（Ctrl/⌘ + Enter 发送）"
+                          class="w-full bg-transparent outline-none resize-none text-sm preserve-whitespace px-2"></textarea>
                 <div class="mt-3 flex items-center justify-between">
                     <div class="text-xs text-gray-500">按 <kbd class="px-1 py-0.5 border rounded">Ctrl/⌘</kbd> + <kbd class="px-1 py-0.5 border rounded">Enter</kbd> 发送</div>
                     <div class="flex gap-2">
@@ -87,13 +101,44 @@
     </main>
 </div>
 
+<!-- 删除知识库：身份校验弹窗 -->
+<div id="authModal" class="fixed inset-0 bg-black/30 hidden items-center justify-center z-50">
+    <div class="bg-white w-[90%] max-w-md rounded-2xl shadow-lg border">
+        <div class="px-5 py-4 border-b flex items-center justify-between">
+            <div class="font-semibold">删除知识库</div>
+            <button id="authClose" class="px-2 py-1 text-gray-500 hover:text-gray-700">✕</button>
+        </div>
+        <div class="p-5 space-y-4">
+            <div class="text-sm text-gray-600">
+                将删除知识库 <span id="confirmRagTag" class="font-medium text-gray-900">（未选择）</span> 的全部向量数据与索引，且不可恢复。请验证身份后继续。
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">用户名</label>
+                <input id="authUser" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" placeholder="root"/>
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">密码</label>
+                <input id="authPass" type="password" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" placeholder="xjtuwyj0524"/>
+            </div>
+            <div id="authTip" class="text-xs text-red-600 hidden">认证失败：用户名或密码错误</div>
+            <div class="pt-2 flex items-center justify-end gap-2">
+                <button id="authCancel" class="px-3 py-1.5 rounded-lg border text-sm hover:bg-gray-50">取消</button>
+                <button id="authConfirm" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm hover:bg-red-700">确认删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 轻量提示 -->
+<div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 px-3 py-2 rounded-lg text-sm bg-gray-900 text-white z-50"></div>
+
 <script>
-    // ========= 基本配置 =========
+    // ======== 基本配置（服务地址常量） ========
+    const API_BASE = 'http://localhost:8090';
     const API_DEFAULT_MODEL = 'deepseek-r1:1.5b';
-    let API_BASE = 'http://localhost:8090';// 可在顶部修改
     let currentEventSource = null;
 
-    // ========= 简单的“数据层”保存在内存 + localStorage =========
+    // ======== 元素引用 ========
     const chatListEl = document.getElementById('chatList');
     const messageListEl = document.getElementById('messageList');
     const chatCountEl = document.getElementById('chatCount');
@@ -101,289 +146,186 @@
     const inputBox = document.getElementById('inputBox');
     const btnSend = document.getElementById('btnSend');
     const btnStop = document.getElementById('btnStop');
-    const modelInput = document.getElementById('modelInput');
-    const baseInput = document.getElementById('baseInput');
+    const modelSelect = document.getElementById('modelSelect');
+    const kbSelect = document.getElementById('kbSelect');
+    const kbStatus = document.getElementById('kbStatus');
+    const btnReloadKB = document.getElementById('btnReloadKB');
+    const btnDeleteKB = document.getElementById('btnDeleteKB');
+    const btnUploadMenu = document.getElementById('btnUploadMenu');
+    const uploadMenu = document.getElementById('uploadMenu');
+    const authModal = document.getElementById('authModal');
+    const authUser = document.getElementById('authUser');
+    const authPass = document.getElementById('authPass');
+    const authConfirm = document.getElementById('authConfirm');
+    const authCancel = document.getElementById('authCancel');
+    const authClose = document.getElementById('authClose');
+    const authTip = document.getElementById('authTip');
+    const confirmRagTag = document.getElementById('confirmRagTag');
+    const toast = document.getElementById('toast');
 
+    // ======== 会话状态 ========
     let chats = JSON.parse(localStorage.getItem('ai_chats') || '[]');
     let selectedId = localStorage.getItem('ai_selected_id') || null;
     let listCollapsed = false;
 
-    function saveState() {
+    function showToast(msg){ toast.textContent = msg; toast.classList.remove('hidden'); setTimeout(()=>toast.classList.add('hidden'), 2000); }
+    function saveState(){
         localStorage.setItem('ai_chats', JSON.stringify(chats));
         localStorage.setItem('ai_selected_id', selectedId || '');
+        localStorage.setItem('kb_selected', kbSelect.value || '');
+        localStorage.setItem('model_name', modelSelect.value || API_DEFAULT_MODEL);
     }
+    function newId(){ return 'chat_' + Date.now(); }
+    function createChat(title='新建聊天'){ const id=newId(); chats.unshift({id,title,expanded:false,messages:[]}); selectedId=id; renderSidebar(); renderMessages(); saveState(); }
+    function deleteChat(id){ const idx=chats.findIndex(c=>c.id===id); if(idx===-1) return; chats.splice(idx,1); if(!chats.length){selectedId=null; messageListEl.innerHTML='';} else if(selectedId===id){selectedId=chats[0].id;} renderSidebar(); renderMessages(); saveState(); }
+    function renameChat(id){ const c=chats.find(c=>c.id===id); if(!c) return; const name=prompt('重命名会话：', c.title); if(name && name.trim()){ c.title=name.trim(); renderSidebar(); saveState(); } }
+    function selectChat(id){ selectedId=id; renderSidebar(); renderMessages(); saveState(); }
+    function updateCount(){ chatCountEl.textContent=String(chats.length); }
 
-    function newId() { return 'chat_' + Date.now(); }
-
-    function createChat(title = '新建聊天') {
-        const id = newId();
-        chats.unshift({ id, title, expanded:false, messages: [] });
-        selectedId = id;
-        renderSidebar();
-        renderMessages();
-        saveState();
-    }
-
-    function deleteChat(id) {
-        const idx = chats.findIndex(c => c.id === id);
-        if (idx === -1) return;
-        chats.splice(idx,1);
-        if (!chats.length) { selectedId = null; messageListEl.innerHTML=''; }
-        else if (selectedId === id) { selectedId = chats[0].id; }
-        renderSidebar(); renderMessages(); saveState();
-    }
-
-    function renameChat(id) {
-        const c = chats.find(c=>c.id===id);
-        if (!c) return;
-        const name = prompt('重命名会话：', c.title);
-        if (name && name.trim()) { c.title = name.trim(); renderSidebar(); saveState(); }
-    }
-
-    function selectChat(id) {
-        selectedId = id;
-        renderSidebar(); renderMessages(); saveState();
-    }
-
-    function updateCount() { chatCountEl.textContent = String(chats.length); }
-
-    function renderSidebar() {
-        updateCount();
-        chatListEl.innerHTML = '';
-
-        const container = document.createElement('div');
-        container.className = listCollapsed ? 'hidden' : '';
-
-        chats.forEach(c => {
-            const isActive = c.id === selectedId;
-
-            // 行
-            const row = document.createElement('div');
-            row.className = `px-4 py-3 border-b cursor-pointer ${isActive ? 'bg-gray-100' : 'hover:bg-gray-50'}`;
-
-            // 标题行
-            const top = document.createElement('div');
-            top.className = 'flex items-center justify-between gap-2';
-
-            const left = document.createElement('div');
-            left.className = 'flex items-center gap-2';
-
-            const caret = document.createElementNS('http://www.w3.org/2000/svg','svg');
-            caret.setAttribute('viewBox','0 0 24 24');
-            caret.setAttribute('fill','none');
-            caret.classList.add('w-4','h-4','text-gray-400','transition-transform');
-            caret.innerHTML = `<path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6" />`;
-            caret.style.transform = c.expanded ? 'rotate(180deg)' : 'rotate(0deg)';
-            caret.addEventListener('click', (e)=>{ e.stopPropagation(); c.expanded = !c.expanded; renderSidebar(); saveState(); });
-
-            const title = document.createElement('div');
-            title.className = `text-sm ${isActive ? 'text-gray-900 font-medium' : 'text-gray-700'}`;
-            title.textContent = c.title;
-
-            left.appendChild(caret);
-            left.appendChild(title);
-
-            const right = document.createElement('div');
-            right.className = 'flex items-center gap-2';
-            if (isActive) {
-                // 在选中行右侧也给重命名/删除入口（可选）
-                const renameBtn = smallBtn('重命名', ()=>renameChat(c.id));
-                const delBtn = smallBtn('删除', ()=>confirm('确认删除该会话？') && deleteChat(c.id));
-                right.append(renameBtn, delBtn);
-            }
-
-            top.append(left, right);
-            row.appendChild(top);
-
-            // 展开区域（只显示在当前会话或显式展开时）
-            if (c.expanded) {
-                const exp = document.createElement('div');
-                exp.className = 'mt-2 flex items-center gap-2 text-xs';
-                exp.append(
-                    smallBtn('选择', ()=>selectChat(c.id)),
-                    smallBtn('重命名', ()=>renameChat(c.id)),
-                    smallBtn('删除', ()=>confirm('确认删除该会话？') && deleteChat(c.id))
-                );
-                row.appendChild(exp);
-            }
-
-            row.addEventListener('click', ()=>selectChat(c.id));
-            container.appendChild(row);
+    function renderSidebar(){
+        updateCount(); chatListEl.innerHTML='';
+        const container=document.createElement('div'); container.className = listCollapsed ? 'hidden' : '';
+        chats.forEach(c=>{
+            const isActive=c.id===selectedId;
+            const row=document.createElement('div'); row.className=`px-4 py-3 border-b cursor-pointer ${isActive?'bg-gray-100':'hover:bg-gray-50'}`;
+            const top=document.createElement('div'); top.className='flex items-center justify-between gap-2';
+            const left=document.createElement('div'); left.className='flex items中心 gap-2';
+            const caret=document.createElementNS('http://www.w3.org/2000/svg','svg'); caret.setAttribute('viewBox','0 0 24 24'); caret.setAttribute('fill','none'); caret.classList.add('w-4','h-4','text-gray-400','transition-transform'); caret.innerHTML=`<path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/>`; caret.style.transform=c.expanded?'rotate(180deg)':'rotate(0deg)'; caret.addEventListener('click',(e)=>{e.stopPropagation(); c.expanded=!c.expanded; renderSidebar(); saveState();});
+            const title=document.createElement('div'); title.className=`text-sm ${isActive?'text-gray-900 font-medium':'text-gray-700'}`; title.textContent=c.title;
+            left.append(caret,title);
+            const right=document.createElement('div'); right.className='flex items-center gap-2';
+            if(isActive){ right.append(smallBtn('重命名',()=>renameChat(c.id)), smallBtn('删除',()=>confirm('确认删除该会话？')&&deleteChat(c.id))); }
+            top.append(left,right); row.append(top);
+            if(c.expanded){ const exp=document.createElement('div'); exp.className='mt-2 flex items-center gap-2 text-xs'; exp.append(smallBtn('选择',()=>selectChat(c.id)), smallBtn('重命名',()=>renameChat(c.id)), smallBtn('删除',()=>confirm('确认删除该会话？')&&deleteChat(c.id))); row.append(exp); }
+            row.addEventListener('click',()=>selectChat(c.id)); container.append(row);
         });
+        chatListEl.append(container);
+        currentChatTitleEl.textContent=(chats.find(c=>c.id===selectedId)?.title)||'未选择会话';
+    }
+    function smallBtn(text,onClick){ const b=document.createElement('button'); b.className='px-2 py-1 rounded border text-gray-700 hover:bg-gray-100'; b.textContent=text; b.addEventListener('click',(e)=>{e.stopPropagation(); onClick();}); return b; }
+    function renderMessages(){ messageListEl.innerHTML=''; const c=chats.find(c=>c.id===selectedId); if(!c) return; c.messages.forEach(m=>messageListEl.append(renderBubble(m.role,m.content))); messageListEl.scrollTop=messageListEl.scrollHeight; }
+    function renderBubble(role,content){ const isUser=role==='user'; const wrap=document.createElement('div'); wrap.className=`w-full flex ${isUser?'justify-end':'justify-start'}`; const bubble=document.createElement('div'); bubble.className=`max-w-[80%] rounded-2xl px-4 py-2 shadow ${isUser?'bg-gray-900 text-white':'bg-white border'}`; bubble.classList.add('preserve-whitespace'); bubble.textContent=content||''; wrap.append(bubble); return wrap; }
+    function appendMessage(role,content){ const c=chats.find(c=>c.id===selectedId); if(!c) return null; const msg={role,content:content||''}; c.messages.push(msg); const el=renderBubble(role,content); messageListEl.append(el); messageListEl.scrollTop=messageListEl.scrollHeight; saveState(); return {msg,el}; }
+    function updateLastAssistantChunk(textChunk){ if(!textChunk) return; const c=chats.find(c=>c.id===selectedId); if(!c||!c.messages.length) return; const last=c.messages[c.messages.length-1]; if(last.role!=='assistant') return; last.content=(last.content||'')+textChunk; const lastNode=messageListEl.lastElementChild?.querySelector(':scope > div'); if(lastNode) lastNode.textContent=last.content; messageListEl.scrollTop=messageListEl.scrollHeight; saveState(); }
 
-        chatListEl.appendChild(container);
-        currentChatTitleEl.textContent = (chats.find(c=>c.id===selectedId)?.title) || '未选择会话';
+    // 拉取知识库列表
+    async function loadKnowledgeBases(){
+        kbStatus.textContent='加载中...'; kbSelect.disabled=true;
+        try{
+            const res = await fetch(`${API_BASE}/api/v1/rag/query_rag_tag_list`);
+            if(!res.ok) throw new Error('HTTP '+res.status);
+            const json = await res.json(); const list = Array.isArray(json?.data) ? json.data : [];
+            kbSelect.innerHTML = '<option value="">（可选）不使用知识库</option>';
+            list.forEach(tag=>{ const opt=document.createElement('option'); opt.value=tag; opt.textContent=tag; kbSelect.append(opt); });
+            const last = localStorage.getItem('kb_selected') || '';
+            if(last && list.includes(last)) kbSelect.value = last;
+            kbStatus.textContent = list.length ? `已加载 ${list.length} 个` : '无可用知识库';
+        }catch(e){ console.error(e); kbStatus.textContent='加载失败'; }
+        finally{ kbSelect.disabled=false; saveState(); }
     }
 
-    function smallBtn(text, onClick) {
-        const b = document.createElement('button');
-        b.className = 'px-2 py-1 rounded border text-gray-700 hover:bg-gray-100';
-        b.textContent = text;
-        b.addEventListener('click', (e)=>{ e.stopPropagation(); onClick(); });
-        return b;
-    }
-
-    function renderMessages() {
-        messageListEl.innerHTML = '';
+    // 发送消息：deepseek 走 /ollama/，GPT 系列统一走 /openai/
+    function send(){
         const c = chats.find(c=>c.id===selectedId);
-        if (!c) return;
+        if(!c){ alert('请先新建并选择一个会话'); return; }
 
-        c.messages.forEach(m => {
-            messageListEl.appendChild(renderBubble(m.role, m.content));
-        });
-
-        // 滚到底
-        messageListEl.scrollTop = messageListEl.scrollHeight;
-    }
-
-    function renderBubble(role, content) {
-        const isUser = role === 'user';
-        const wrap = document.createElement('div');
-        wrap.className = `w-full flex ${isUser ? 'justify-end' : 'justify-start'}`;
-
-        const bubble = document.createElement('div');
-        bubble.className = `max-w-[80%] rounded-2xl px-4 py-2 shadow ${isUser ? 'bg-gray-900 text-white' : 'bg-white border'}`;
-        bubble.classList.add('preserve-whitespace');
-        bubble.textContent = content || '';
-        wrap.appendChild(bubble);
-        return wrap;
-    }
-
-    function appendMessage(role, content) {
-        const c = chats.find(c=>c.id===selectedId);
-        if (!c) return null;
-        const msg = { role, content: content || '' };
-        c.messages.push(msg);
-        const el = renderBubble(role, content);
-        messageListEl.appendChild(el);
-        messageListEl.scrollTop = messageListEl.scrollHeight;
-        saveState();
-        return { msg, el };
-    }
-
-    function updateLastAssistantChunk(textChunk) {
-        if (!textChunk) return;
-        const c = chats.find(c=>c.id===selectedId);
-        if (!c || !c.messages.length) return;
-        const last = c.messages[c.messages.length - 1];
-        if (last.role !== 'assistant') return;
-
-        last.content = (last.content || '') + textChunk;
-        // 更新界面最后一个气泡
-        const lastNode = messageListEl.lastElementChild?.querySelector(':scope > div');
-        if (lastNode) lastNode.textContent = last.content;
-        // 滚到底
-        messageListEl.scrollTop = messageListEl.scrollHeight;
-        saveState();
-    }
-
-    function send() {
-        const c = chats.find(c=>c.id===selectedId);
-        if (!c) { alert('请先新建并选择一个会话'); return; }
-
-        API_BASE = baseInput.value || API_BASE;
-
-        const model = (modelInput.value || API_DEFAULT_MODEL).trim();
+        const model = (modelSelect.value || API_DEFAULT_MODEL).trim();
         const text = inputBox.value.trim();
-        if (!text) return;
+        const ragTag = (kbSelect.value || '').trim();
+        if(!text) return;
 
-        // 把第一条用户消息的开头赋给会话标题（只有默认标题时）
-        if (c.title === '新建聊天') {
-            c.title = text.slice(0, 20);
-            renderSidebar();
-        }
+        if(c.title==='新建聊天'){ c.title = text.slice(0,20); renderSidebar(); }
 
-        // 先渲染用户消息 + 占位的助手消息
         appendMessage('user', text);
-        const { msg: assistantMsg } = appendMessage('assistant', ''); // 空内容，等待流式填充
-
-        // 清空输入
+        appendMessage('assistant', '');
         inputBox.value = '';
 
-        // 关闭上一次未完成的流
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
-        }
+        if(currentEventSource){ currentEventSource.close(); currentEventSource=null; }
 
-        // 组织 SSE URL（GET + query）
-        const url = `${API_BASE}/api/v1/ollama/generate_stream?model=${encodeURIComponent(model)}&message=${encodeURIComponent(text)}`;
+        const isDeepseek = (model === 'deepseek-r1:1.5b');
+        // —— 关键修复：无论 gpt-4.1-nano / gpt-5-mini / gpt-4o-mini，都走 openai 路径 ——
+        const group = isDeepseek ? 'ollama' : 'openai';
+        const endpoint = ragTag ? 'generate_stream_rag' : 'generate_stream';
+        let url = `${API_BASE}/api/v1/${group}/${endpoint}?model=${encodeURIComponent(model)}&message=${encodeURIComponent(text)}`;
+        if(ragTag) url += `&ragTag=${encodeURIComponent(ragTag)}`;
+
         const es = new EventSource(url);
         currentEventSource = es;
         btnStop.classList.remove('hidden');
 
-        es.onmessage = (ev) => {
-            // 兼容：可能是数组的一项，也可能就是单对象
+        es.onmessage = (ev)=>{
             const raw = ev.data?.trim();
-            if (!raw) return;
-
+            if(!raw) return;
             let items = [];
-            try {
-                if (raw.startsWith('[')) items = JSON.parse(raw);
-                else items = [JSON.parse(raw)];
-            } catch (_e) {
-                // 若后端发送的是纯文本 token，也直接拼
-                updateLastAssistantChunk(raw);
-                return;
-            }
-
-            for (const item of items) {
-                const result = item?.result || item; // 兜底：有些服务可能直接就是 result 对象
+            try{ items = raw.startsWith('[') ? JSON.parse(raw) : [JSON.parse(raw)]; }
+            catch(_){ updateLastAssistantChunk(raw); return; }
+            for(const item of items){
+                const result = item?.result || item;
                 const output = result?.output;
                 const metadata = result?.metadata;
-
-                // 8. 文本从 result.output.content 取，可能为空
                 const chunk = output?.content || '';
-                if (chunk) updateLastAssistantChunk(chunk);
-
-                // 9. 结束标识：result.metadata.finishReason === "STOP"（大小写都兼容）
+                if(chunk) updateLastAssistantChunk(chunk);
                 const fr = (metadata?.finishReason || output?.properties?.finishReason || '').toString().toUpperCase();
-                if (fr === 'STOP') {
-                    es.close();
-                    currentEventSource = null;
-                    btnStop.classList.add('hidden');
-                }
+                if(fr==='STOP'){ es.close(); currentEventSource=null; btnStop.classList.add('hidden'); }
             }
         };
-
-        es.onerror = () => {
-            // 流异常也算结束
-            es.close();
-            currentEventSource = null;
-            btnStop.classList.add('hidden');
-        };
+        es.onerror = ()=>{ es.close(); currentEventSource=null; btnStop.classList.add('hidden'); };
+        saveState();
     }
 
-    // ========= 事件绑定 =========
+    // 删除知识库
+    function openAuthModal(){
+        const tag = kbSelect.value.trim();
+        if(!tag){ showToast('请先选择要删除的知识库'); return; }
+        confirmRagTag.textContent = tag;
+        authUser.value=''; authPass.value=''; authTip.classList.add('hidden');
+        authModal.classList.remove('hidden'); authModal.classList.add('flex'); authUser.focus();
+    }
+    function closeAuthModal(){ authModal.classList.add('hidden'); authModal.classList.remove('flex'); }
+    async function doDeleteKnowledge(){
+        const tag = kbSelect.value.trim();
+        const user = authUser.value.trim();
+        const pass = authPass.value;
+        if(!user || !pass){ authTip.textContent='请输入用户名和密码'; authTip.classList.remove('hidden'); return; }
+        const url = `${API_BASE}/api/v1/rag/knowledge/delete?ragTag=${encodeURIComponent(tag)}&username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
+        try{
+            authConfirm.disabled = true;
+            const res = await fetch(url,{method:'DELETE'});
+            const data = await res.json().catch(()=> ({}));
+            if(!res.ok || (data.code && data.code!=='0000')){ authTip.textContent = data.info || `删除失败（HTTP ${res.status})`; authTip.classList.remove('hidden'); return; }
+            closeAuthModal(); showToast('删除成功');
+            if(kbSelect.value===tag) kbSelect.value='';
+            await loadKnowledgeBases();
+        }catch(e){ authTip.textContent='网络错误或服务不可达'; authTip.classList.remove('hidden'); }
+        finally{ authConfirm.disabled=false; }
+    }
+
+    // 事件绑定
     document.getElementById('btnNewChat').addEventListener('click', ()=>createChat());
     btnSend.addEventListener('click', send);
-    btnStop.addEventListener('click', ()=>{
-        if (currentEventSource) currentEventSource.close();
-        currentEventSource = null;
-        btnStop.classList.add('hidden');
-    });
+    btnStop.addEventListener('click', ()=>{ if(currentEventSource) currentEventSource.close(); currentEventSource=null; btnStop.classList.add('hidden'); });
+    inputBox.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); send(); } });
 
-    // 快捷键：Ctrl/⌘ + Enter
-    inputBox.addEventListener('keydown', (e)=>{
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-            e.preventDefault();
-            send();
-        }
-    });
+    const toggleList=document.getElementById('toggleList');
+    const chevronIcon=document.getElementById('chevronIcon');
+    toggleList.addEventListener('click', ()=>{ listCollapsed=!listCollapsed; chevronIcon.style.transform=listCollapsed?'rotate(-90deg)':'rotate(0deg)'; renderSidebar(); });
 
-    // 折叠/展开聊天列表
-    const toggleList = document.getElementById('toggleList');
-    const chevronIcon = document.getElementById('chevronIcon');
-    toggleList.addEventListener('click', ()=>{
-        listCollapsed = !listCollapsed;
-        chevronIcon.style.transform = listCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)';
-        renderSidebar();
-    });
+    btnUploadMenu.addEventListener('click',(e)=>{ e.stopPropagation(); uploadMenu.classList.toggle('hidden'); });
+    document.addEventListener('click', ()=> uploadMenu.classList.add('hidden'));
 
-    // ========= 首次加载：若没有会话，创建一个 =========
+    btnReloadKB.addEventListener('click', loadKnowledgeBases);
+    btnDeleteKB.addEventListener('click', openAuthModal);
+    authClose.addEventListener('click', closeAuthModal);
+    authCancel.addEventListener('click', closeAuthModal);
+    authModal.addEventListener('click', (e)=>{ if(e.target===authModal) closeAuthModal(); });
+    authConfirm.addEventListener('click', doDeleteKnowledge);
+
+    // 首次加载
     (function init(){
-        if (!chats.length) createChat();
-        else { renderSidebar(); renderMessages(); }
+        const savedModel = localStorage.getItem('model_name');
+        modelSelect.value = savedModel || API_DEFAULT_MODEL;
+        if(!chats.length) createChat(); else { renderSidebar(); renderMessages(); }
+        loadKnowledgeBases();
     })();
 </script>
 </body>
