@@ -55,7 +55,7 @@ public class OpenAiController implements IAiService {
 
     @GetMapping("generate")
     @Override
-    public ChatResponse generate(@RequestParam String model, @RequestParam String message) {
+    public ChatResponse generate(@RequestParam("model") String model, @RequestParam("message") String message) {
         OpenAiChatClient client = pickClient(model);
         return client.call(new Prompt(
                 message,
@@ -73,7 +73,7 @@ public class OpenAiController implements IAiService {
      *   - 其他渠道：保持原来的真流式。
      */
     @GetMapping(value = "generate_stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ChatResponse> generateStream(@RequestParam String model, @RequestParam String message) {
+    public Flux<ChatResponse> generateStream(@RequestParam("model") String model, @RequestParam("message") String message) {
         OpenAiChatClient client = pickClient(model);
         Prompt prompt = new Prompt(message, OpenAiChatOptions.builder().withModel(model).build());
 
@@ -93,9 +93,9 @@ public class OpenAiController implements IAiService {
 
     @GetMapping(value = "generate_stream_rag", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Override
-    public Flux<ChatResponse> generateStreamRag(@RequestParam String model,
-                                                @RequestParam String ragTag,
-                                                @RequestParam String message) {
+    public Flux<ChatResponse> generateStreamRag(@RequestParam("model") String model,
+                                                @RequestParam("ragTag") String ragTag,
+                                                @RequestParam("message") String message) {
 
         String SYSTEM_PROMPT = """
                 Use the information from the DOCUMENTS section to provide accurate answers but act as if you knew this information innately.

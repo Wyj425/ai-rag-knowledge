@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <title>知识库上传</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:8px}
+        .drop-active{outline:2px dashed #111827;background:#f9fafb}
+    </style>
+</head>
+<body class="min-h-screen bg-gray-50 text-gray-900">
+<div class="max-w-5xl mx-auto p-6">
+    <!-- 顶部标题 -->
+    <div class="mb-6 flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold">上传知识库</h1>
+            <p class="text-sm text-gray-500 mt-1">支持 <code>.md</code>、<code>.txt</code>、<code>.sql</code>，多文件上传</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="text-sm text-gray-600">服务地址</label>
+            <input id="baseInput" class="px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                   value="http://106.54.0.161:8090" placeholder="http://host:port">
+        </div>
+    </div>
+
+    <!-- 表单卡片 -->
+    <div class="bg-white rounded-2xl shadow-sm border p-6 space-y-5">
+
+        <!-- ragTag 输入 -->
+        <div>
+            <label class="block text-sm font-medium mb-2">知识库名称（ragTag）<span class="text-red-500">*</span></label>
+            <input id="ragTagInput" type="text" maxlength="60"
+                   class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
+                   placeholder="例如：项目A文档、公司手册……">
+            <p class="text-xs text-gray-500 mt-1">用于给本次上传的文档打上标签，检索时按该标签过滤</p>
+        </div>
+
+        <!-- 选择/拖拽区域 -->
+        <div id="dropZone"
+             class="rounded-2xl border border-dashed bg-gray-50 p-6 text-center transition">
+            <div class="flex items-center justify-center gap-3">
+                <svg class="w-6 h-6 text-gray-500" viewBox="0 0 24 24" fill="none"><path d="M12 16V8m0 0l-3 3m3-3l3 3M7 20h10a4 4 0 0 0 4-4V9a4 4 0 0 0-4-4h-1.172a2 2 0 0 1-1.414-.586l-1.828-1.828A2 2 0 0 0 11.172 2H7a4 4 0 0 0-4 4v10a4 4 0 0 0 4 4Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div class="text-sm text-gray-600">拖拽文件到此处，或</div>
+                <label class="px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800 cursor-pointer">
+                    选择文件
+                    <input id="fileInput" type="file" class="hidden" multiple
+                           accept=".md,.txt,.sql,text/markdown,text/plain,application/sql">
+                </label>
+            </div>
+            <div class="text-xs text-gray-400 mt-2">单次最多选择 50 个文件</div>
+        </div>
+
+        <!-- 文件列表 -->
+        <div>
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-medium">待上传文件</span>
+                <button id="btnClear" class="text-sm text-gray-600 hover:text-gray-900">清空</button>
+            </div>
+            <ul id="fileList" class="space-y-2 max-h-56 overflow-y-auto"></ul>
+        </div>
+
+        <!-- 进度条 -->
+        <div id="progressWrap" class="hidden">
+            <div class="flex items-center justify-between text-sm mb-1">
+                <span id="progressText" class="text-gray-600">准备上传…</span>
+                <span id="progressPercent" class="text-gray-900 font-medium">0%</span>
+            </div>
+            <div class="w-full h-2 bg-gray-200 rounded">
+                <div id="progressBar" class="h-2 bg-gray-900 rounded" style="width:0%"></div>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="flex items-center justify-end gap-3">
+            <button id="btnUpload" class="px-4 py-2 rounded-lg bg-gray-900 text-white text-sm hover:bg-gray-800">
+                开始上传
+            </button>
+        </div>
+
+        <!-- 提示区域 -->
+        <div id="toast" class="hidden px-3 py-2 rounded-lg text-sm"></div>
+    </div>
+</div>
+
+<script>
+    // ========== 基础元素 ==========
+    const baseInput = document.getElementById('baseInput');
+    const ragTagInput = document.getElementById('ragTagInput');
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const fileList = document.getElementById('fileList');
+    const btnClear = document.getElementById('btnClear');
+    const btnUpload = document.getElementById('btnUpload');
+    const toast = document.getElementById('toast');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressText = document.getElementById('progressText');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+
+    // ========== 选择的文件（内存清单） ==========
+    /** @type {File[]} */
+    let pendingFiles = [];
+
+    // 工具：文件大小
+    const fmt = n => {
+        if (n < 1024) return n + ' B';
+        if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+        return (n/1024/1024).toFixed(1) + ' MB';
+    };
+
+    // 工具：轻提示
+    function showToast(msg, ok=true) {
+        toast.textContent = msg;
+        toast.className = `px-3 py-2 rounded-lg text-sm ${ok?'bg-emerald-50 text-emerald-700 border border-emerald-200':'bg-red-50 text-red-700 border border-red-200'}`;
+        toast.classList.remove('hidden');
+        setTimeout(()=>toast.classList.add('hidden'), 3000);
+    }
+
+    // 渲染文件列表
+    function renderList() {
+        fileList.innerHTML = '';
+        if (!pendingFiles.length) {
+            fileList.innerHTML = '<li class="text-sm text-gray-400">暂无文件</li>';
+            return;
+        }
+        pendingFiles.forEach((f, idx) => {
+            const li = document.createElement('li');
+            li.className = 'flex items-center justify-between bg-gray-50 border rounded-lg px-3 py-2';
+            li.innerHTML = `
+          <div class="min-w-0">
+            <div class="text-sm text-gray-900 truncate">${f.name}</div>
+            <div class="text-xs text-gray-500">${f.type || 'text/plain'} · ${fmt(f.size)}</div>
+          </div>
+          <button data-i="${idx}" class="px-2 py-1 text-sm border rounded hover:bg-gray-100">移除</button>
+        `;
+            li.querySelector('button').addEventListener('click', e=>{
+                const i = +e.currentTarget.dataset.i;
+                pendingFiles.splice(i,1);
+                renderList();
+            });
+            fileList.appendChild(li);
+        });
+    }
+
+    // 校验并添加文件
+    function addFiles(files) {
+        const allowed = ['.md','.txt','.sql'];
+        for (const file of files) {
+            const name = file.name.toLowerCase();
+            const ok = allowed.some(ext => name.endsWith(ext));
+            if (!ok) {
+                showToast(`已忽略不支持的文件类型：${file.name}`, false);
+                continue;
+            }
+            pendingFiles.push(file);
+        }
+        // 限制最多 50 个
+        if (pendingFiles.length > 50) {
+            pendingFiles = pendingFiles.slice(0, 50);
+            showToast('最多选择 50 个文件，多余的已忽略', false);
+        }
+        renderList();
+    }
+
+    // 绑定选择
+    fileInput.addEventListener('change', e => addFiles(e.target.files));
+
+    // 拖拽
+    ;['dragenter','dragover'].forEach(evt => {
+        dropZone.addEventListener(evt, e=>{ e.preventDefault(); dropZone.classList.add('drop-active'); });
+    });
+    ;['dragleave','drop'].forEach(evt => {
+        dropZone.addEventListener(evt, e=>{ e.preventDefault(); dropZone.classList.remove('drop-active'); });
+    });
+    dropZone.addEventListener('drop', e => {
+        const files = e.dataTransfer.files;
+        addFiles(files);
+    });
+
+    // 清空
+    btnClear.addEventListener('click', ()=>{
+        pendingFiles = [];
+        fileInput.value = '';
+        renderList();
+    });
+
+    // 上传（用 XMLHttpRequest 以获得上传进度）
+    btnUpload.addEventListener('click', async ()=>{
+        const API_BASE = baseInput.value.trim() || 'http://106.54.0.161:8090';
+        const ragTag = ragTagInput.value.trim();
+
+        if (!ragTag) { showToast('请输入知识库名称（ragTag）', false); return; }
+        if (!pendingFiles.length) { showToast('请先选择文件', false); return; }
+
+        // 组装 FormData（字段名必须与后端保持一致：ragTag，file）
+        const form = new FormData();
+        form.append('ragTag', ragTag);
+        pendingFiles.forEach(f => form.append('file', f)); // 多文件：同名多次 append
+
+        // UI 状态
+        btnUpload.disabled = true;
+        btnUpload.classList.add('opacity-60','cursor-not-allowed');
+        progressWrap.classList.remove('hidden');
+        progressText.textContent = '正在上传...';
+        progressBar.style.width = '0%';
+        progressPercent.textContent = '0%';
+
+        try {
+            const url = `${API_BASE}/api/v1/rag/file/upload`;
+
+            await xhrUpload(url, form, (loaded, total)=>{
+                if (total>0) {
+                    const p = Math.round(loaded/total*100);
+                    progressBar.style.width = p + '%';
+                    progressPercent.textContent = p + '%';
+                }
+            });
+
+            progressBar.style.width = '100%';
+            progressPercent.textContent = '100%';
+            progressText.textContent = '上传完成';
+            showToast('上传成功');
+            // 记住最近的 ragTag
+            localStorage.setItem('last_rag_tag', ragTag);
+        } catch (e) {
+            console.error(e);
+            showToast(typeof e === 'string' ? e : '上传失败，请检查服务是否可达', false);
+        } finally {
+            btnUpload.disabled = false;
+            btnUpload.classList.remove('opacity-60','cursor-not-allowed');
+        }
+    });
+
+    // XHR 封装：返回 Promise，并支持进度回调
+    function xhrUpload(url, formData, onProgress){
+        return new Promise((resolve, reject)=>{
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            // 不要手动设置 Content-Type，浏览器会自动带 boundary
+            xhr.upload.onprogress = (e)=> onProgress && onProgress(e.loaded, e.total || 0);
+            xhr.onreadystatechange = ()=>{
+                if (xhr.readyState === 4) {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const json = JSON.parse(xhr.responseText || '{}');
+                            if (json.code && json.code !== '0000') reject(json.info || '服务端返回失败');
+                            else resolve(json);
+                        } catch {
+                            resolve(xhr.responseText);
+                        }
+                    } else {
+                        reject('HTTP ' + xhr.status + ' 上传失败');
+                    }
+                }
+            };
+            xhr.onerror = ()=> reject('网络错误');
+            xhr.send(formData);
+        });
+    }
+
+    // 恢复上次 ragTag
+    (function init(){
+        const last = localStorage.getItem('last_rag_tag');
+        if (last) ragTagInput.value = last;
+        renderList();
+    })();
+</script>
+</body>
+</html>

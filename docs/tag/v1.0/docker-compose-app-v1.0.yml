@@ -1,0 +1,38 @@
+version: '3.8'
+# docker-compose -f docker-compose-app-v1.0.yml up -d
+services:
+  # 部署前端项目
+  nginx:
+    image: registry.cn-hangzhou.aliyuncs.com/xfg-studio/nginx:latest
+    container_name: nginx
+    restart: always
+    ports:
+      - '80:80'
+    volumes:
+      - ./nginx/html:/usr/share/nginx/html
+      - ./nginx/conf/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf/conf.d:/etc/nginx/conf.d
+    privileged: true
+  # ai-rag-knowledge
+  ai-rag-knowledge-app:
+    image: thelastsavior/ai-rag-knowledge-app:1.0
+    container_name: ai-rag-knowledge-app
+    restart: on-failure
+    ports:
+      - "8090:8090"
+    environment:
+      - TZ=PRC
+      - SERVER_PORT=8090
+    volumes:
+      - ./log:/data/log
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - my-network
+
+networks:
+  my-network:
+    driver: bridge
